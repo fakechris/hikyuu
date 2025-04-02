@@ -42,7 +42,7 @@ class ProgressBar:
 
 
 class ImportTdxToH5Task:
-    def __init__(self, log_queue, queue, config, market, ktype, quotations, src_dir, dest_dir):
+    def __init__(self, log_queue, queue, config, market, ktype, quotations, src_dir, dest_dir, end_date=None):
         super(ImportTdxToH5Task, self).__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.task_name = 'IMPORT_KDATA'
@@ -68,6 +68,7 @@ class ImportTdxToH5Task:
                 self.src_dir = src_dir + "/vipdoc/sz/fzline"
         self.dest_dir = dest_dir
         self.status = "no run"
+        self.end_date = end_date
 
     def __del__(self):
         #print(self.__class__.__name__, self.market, self.ktype, "__del__")
@@ -100,10 +101,10 @@ class ImportTdxToH5Task:
             progress = ProgressBar(self)
             if use_hdf:
                 count = import_data(
-                    connect, self.market, self.ktype, self.quotations, self.src_dir, self.dest_dir, progress
+                    connect, self.market, self.ktype, self.quotations, self.src_dir, self.dest_dir, progress, self.end_date
                 )
             else:
-                count = import_data(connect, self.market, self.ktype, self.quotations, self.src_dir, progress)
+                count = import_data(connect, self.market, self.ktype, self.quotations, self.src_dir, progress, self.end_date)
 
         except Exception as e:
             self.logger.error(e)

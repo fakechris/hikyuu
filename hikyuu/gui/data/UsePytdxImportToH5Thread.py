@@ -54,12 +54,14 @@ from hikyuu.util.mylog import class_logger
 class UsePytdxImportToH5Thread(QThread):
     message = pyqtSignal(list)
 
-    def __init__(self, parent, config):
+    def __init__(self, parent, config, end_date=None):
         super(UsePytdxImportToH5Thread, self).__init__()
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.parent = parent
         self.log_queue = parent.mp_log_q if parent is not None else None
         self.config = config
         self.msg_name = 'HDF5_IMPORT'
+        self.end_date = end_date
 
         self.process_list = []
         self.hosts = []

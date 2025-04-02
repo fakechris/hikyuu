@@ -41,13 +41,14 @@ from hikyuu.util import *
 class UseTdxImportToH5Thread(QThread):
     message = pyqtSignal(list)
 
-    def __init__(self, parent, config):
+    def __init__(self, parent, config, end_date=None):
         super(UseTdxImportToH5Thread, self).__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.parent = parent
         self.log_queue = parent.mp_log_q if parent is not None else None
         self.config = config
         self.msg_name = 'HDF5_IMPORT'
+        self.end_date = end_date
 
         self.process_list = []
 
@@ -97,24 +98,24 @@ class UseTdxImportToH5Thread(QThread):
             self.tasks.append(ImportHistoryFinanceTask(self.log_queue, self.queue, self.config, dest_dir))
         if self.config.getboolean('ktype', 'day', fallback=False):
             self.tasks.append(
-                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SH', 'DAY', self.quotations, src_dir, dest_dir)
+                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SH', 'DAY', self.quotations, src_dir, dest_dir, end_date=self.end_date)
             )
             self.tasks.append(
-                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SZ', 'DAY', self.quotations, src_dir, dest_dir)
+                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SZ', 'DAY', self.quotations, src_dir, dest_dir, end_date=self.end_date)
             )
         if self.config.getboolean('ktype', 'min5', fallback=False):
             self.tasks.append(
-                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SH', '5MIN', self.quotations, src_dir, dest_dir)
+                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SH', '5MIN', self.quotations, src_dir, dest_dir, end_date=self.end_date)
             )
             self.tasks.append(
-                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SZ', '5MIN', self.quotations, src_dir, dest_dir)
+                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SZ', '5MIN', self.quotations, src_dir, dest_dir, end_date=self.end_date)
             )
         if self.config.getboolean('ktype', 'min', fallback=False):
             self.tasks.append(
-                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SH', '1MIN', self.quotations, src_dir, dest_dir)
+                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SH', '1MIN', self.quotations, src_dir, dest_dir, end_date=self.end_date)
             )
             self.tasks.append(
-                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SZ', '1MIN', self.quotations, src_dir, dest_dir)
+                ImportTdxToH5Task(self.log_queue, self.queue, config, 'SZ', '1MIN', self.quotations, src_dir, dest_dir, end_date=self.end_date)
             )
 
     def __del__(self):

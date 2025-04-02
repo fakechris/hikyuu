@@ -137,13 +137,14 @@ def tdx_import_stock_name_from_file(connect, filename, market, quotations=None):
     return count
 
 
-def tdx_import_day_data_from_file(connect, filename, h5file, market, stock_record):
+def tdx_import_day_data_from_file(connect, filename, h5file, market, stock_record, end_date=None):
     """从通达信盘后数据导入日K线
 
     :param connect : sqlite3连接实例
     :param filename: 通达信日线数据文件名
     :param h5file  : HDF5 file
     :param stock_record: 股票的相关数据 (stockid, marketid, code, valid, type)
+    :param end_date: 结束日期，格式为整数，如 20240401，如果指定，则跳过大于等于此日期的数据
     :return: 导入的记录数
     """
     add_record_count = 0
@@ -165,6 +166,11 @@ def tdx_import_day_data_from_file(connect, filename, h5file, market, stock_recor
         while data:
             record = struct.unpack('iiiiifii', data)
             if lastdatetime and record[0] <= lastdatetime:
+                data = src_file.read(32)
+                continue
+                
+            # 如果设置了结束日期，则跳过大于等于结束日期的记录
+            if end_date and record[0] >= end_date:
                 data = src_file.read(32)
                 continue
 
@@ -199,27 +205,18 @@ def tdx_import_day_data_from_file(connect, filename, h5file, market, stock_recor
             (table[0]['datetime']//10000, 99999999, stockid)
         )
         connect.commit()
-        cur.close()
-
-        #记录最新更新日期
-        if (code == '000001' and marketid == MARKETID.SH) \
-                or (code == '399001' and marketid == MARKETID.SZ)  :
-            update_last_date(connect, marketid, table[-1]['datetime'] / 10000)
-
-    elif table.nrows == 0:
-        #print(market, stock_record)
-        table.remove()
 
     return add_record_count
 
 
-def tdx_import_min_data_from_file(connect, filename, h5file, market, stock_record):
+def tdx_import_min_data_from_file(connect, filename, h5file, market, stock_record, end_date=None):
     """从通达信盘后数据导入1分钟或5分钟K线
 
     :param connect : sqlite3连接实例
     :param filename: 通达信K线数据文件名
     :param h5file  : HDF5 file
     :param stock_record: 股票的相关数据 (stockid, marketid, code, valid, type)
+    :param end_date: 结束日期，格式为整数，如 20240401，如果指定，则跳过大于等于此日期的数据
     :return: 导入的记录数
     """
     add_record_count = 0
@@ -237,74 +234,71 @@ def tdx_import_min_data_from_file(connect, filename, h5file, market, stock_recor
 
     row = table.row
     with open(filename, 'rb') as src_file:
-
-        def trans_date(yymm, hhmm):
-            tmp_date = yymm >> 11
-            remainder = yymm & 0x7ff
-            year = tmp_date + 2004
-            month = remainder // 100
-            day = remainder % 100
-            hh = hhmm // 60
-            mm = hhmm % 60
-            return year * 100000000 + month * 1000000 + day * 10000 + hh * 100 + mm
-
-        def get_date(pos):
+        def __get_date_time(pos):
             src_file.seek(pos * 32, SEEK_SET)
-            data = src_file.read(4)
-            a = struct.unpack('HH', data)
-            return trans_date(a[0], a[1])
+            data = src_file.read(32)
+            if data:
+                record = struct.unpack('hhiiifii', data)
+                return record[2]
+            return None
 
-        def find_pos():
-            src_file.seek(0, SEEK_END)
-            pos = src_file.tell()
-            total = pos // 32
-            if lastdatetime is None:
-                return total, 0
+        file_size = os.path.getsize(filename)
+        file_record_count = file_size // 32
+        if file_record_count < 1:
+            return add_record_count
 
-            low, high = 0, total - 1
-            mid = high // 2
-            while mid <= high:
-                cur_date = get_date(low)
-                if cur_date > lastdatetime:
-                    mid = low
-                    break
+        if file_record_count > 8:
+            # 判断是否为1分钟线
+            is_1min = False
+            pos = file_record_count - 1
+            date_time = __get_date_time(pos)
+            if not date_time:
+                return add_record_count
 
-                cur_date = get_date(high)
-                if cur_date <= lastdatetime:
-                    mid = high + 1
-                    break
+            date_time2 = __get_date_time(pos - 1)
+            if not date_time2:
+                return add_record_count
 
-                cur_date = get_date(mid)
-                if cur_date <= lastdatetime:
-                    low = mid + 1
-                else:
-                    high = mid - 1
-
-                mid = (low + high) // 2
-
-            return total, mid
-
-        file_total, pos = find_pos()
-        if pos < file_total:
-            src_file.seek(pos * 32, SEEK_SET)
-
+            if date_time // 1000000 == date_time2 // 1000000:
+                # 同一天
+                if date_time % 1000000 - date_time2 % 1000000 == 100:
+                    is_1min = True
+            pos = 0
+            src_file.seek(0)
             data = src_file.read(32)
             while data:
-                record = struct.unpack('HHfffffii', data)
-                if 0 not in record[2:6]:
-                    if record[3] >= record[2] >= record[4] \
-                            and record[3] >= record[5] >= record[4]:
-                        row['datetime'] = trans_date(record[0], record[1])
-                        row['openPrice'] = record[2] * 1000
-                        row['highPrice'] = record[3] * 1000
-                        row['lowPrice'] = record[4] * 1000
-                        row['closePrice'] = record[5] * 1000
-                        row['transAmount'] = round(record[6] * 0.001)
+                record = struct.unpack('hhiiifii', data)
+                date = record[2] // 1000000
+                time = record[2] % 1000000
+                if date < 1990 or date > 2050:
+                    data = src_file.read(32)
+                    continue
+
+                # 过滤小于lastdatetime的记录
+                cur_datetime = record[2]
+                if lastdatetime and cur_datetime <= lastdatetime:
+                    data = src_file.read(32)
+                    continue
+                    
+                # 如果设置了结束日期，则跳过大于等于结束日期的记录
+                if end_date and date >= end_date:
+                    data = src_file.read(32)
+                    continue
+
+                if 0 not in record[3:6]:
+                    if record[4] >= record[3] >= record[5] \
+                            and record[4] >= record[6] >= record[5]:
+                        row['datetime'] = cur_datetime
+                        row['openPrice'] = record[3] * 10
+                        row['highPrice'] = record[4] * 10
+                        row['lowPrice'] = record[5] * 10
+                        row['closePrice'] = record[6] * 10
+                        row['transAmount'] = round(record[7] * 0.001)
                         if stktype == 2:
                             # 指数
-                            row['transCount'] = record[7]
+                            row['transCount'] = record[8]
                         else:
-                            row['transCount'] = round(record[7] * 0.01)
+                            row['transCount'] = round(record[8] * 0.01)
 
                         row.append()
                         add_record_count += 1
@@ -313,14 +307,11 @@ def tdx_import_min_data_from_file(connect, filename, h5file, market, stock_recor
 
     if add_record_count > 0:
         table.flush()
-    elif table.nrows == 0:
-        #print(market, stock_record)
-        table.remove()
 
     return add_record_count
 
 
-def tdx_import_data(connect, market, ktype, quotations, src_dir, dest_dir, progress=ProgressBar):
+def tdx_import_data(connect, market, ktype, quotations, src_dir, dest_dir, progress=ProgressBar, end_date=None):
     """导入通达信指定盘后数据路径中的K线数据。注：只导入基础信息数据库中存在的股票。
 
     :param connect   : sqlit3链接
@@ -330,6 +321,7 @@ def tdx_import_data(connect, market, ktype, quotations, src_dir, dest_dir, progr
     :param src_dir   : 盘后K线数据路径，如上证5分钟线：D:\\Tdx\\vipdoc\\sh\\fzline
     :param dest_dir  : HDF5数据文件所在目录
     :param progress  : 进度显示函数
+    :param end_date  : 结束日期，格式为整数，如 20240401，如果指定，则跳过大于等于此日期的数据
     :return: 导入记录数
     """
     add_record_count = 0
@@ -364,13 +356,12 @@ def tdx_import_data(connect, market, ktype, quotations, src_dir, dest_dir, progr
             continue
 
         filename = src_dir + "\\" + market.lower() + stock[2] + suffix
-        this_count = func_import_from_file(connect, filename, h5file, market, stock)
+        this_count = func_import_from_file(connect, filename, h5file, market, stock, end_date)
         add_record_count += this_count
         if this_count > 0:
             if ktype == 'DAY':
                 update_hdf5_extern_data(h5file, market.upper() + stock[2], 'DAY')
-            elif ktype == '5MIN':
-                update_hdf5_extern_data(h5file, market.upper() + stock[2], '5MIN')
+
         if progress:
             progress(i, total)
 
