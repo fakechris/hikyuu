@@ -18,6 +18,8 @@
 *.so.*.*
 *.dylib
 *.a
+*.csv
+backtest_results/
 .metadata
 .settings
 .cproject
